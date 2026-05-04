@@ -1,66 +1,107 @@
-# File Upload Validator
+# AI-Powered File Description Validator
 
-An AI-powered web application that validates whether a user's text description matches their uploaded file (PDF, JPG/PNG, or MP4). All processing runs locally — no external API calls.
+![Python](https://img.shields.io/badge/Python-3.9+-3776AB?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
+![React](https://img.shields.io/badge/React-61DAFB?logo=react&logoColor=black)
+![Vite](https://img.shields.io/badge/Vite-646CFF?logo=vite&logoColor=white)
+![Local AI](https://img.shields.io/badge/AI-100%25%20Local-success)
 
-## Tech Stack
+## Overview
 
-- **Backend:** Python FastAPI
-- **Frontend:** React (Vite)
-- **AI/ML:** Sentence-Transformers, OpenCLIP, Tesseract OCR — all local
+A web app that decides whether a user's text description actually matches the file they're trying to upload — before letting the upload through. It scores the semantic similarity between the description and the file's contents on a 0–100% scale, then gates the upload: green (allowed) at ≥75%, yellow (warning, override available) at 50–74%, red (blocked) below 50%.
 
-## Requirements
+The whole pipeline runs **locally** — no external API calls, no cloud inference, no data leaving the machine. Useful as a portfolio piece, but also as a real moderation primitive: anywhere users upload files with required descriptions (job applications, marketplace listings, evidence submissions), this stops obvious mismatches at the boundary.
+
+## Features
+
+- **Drag-and-drop upload** with file-type auto-detection
+- **Real-time match scoring (0–100%)** rendered as a labeled gauge after upload
+- **Multi-modal support** — PDF, JPG/PNG, MP4 video
+- **Three-tier gate** — allowed / warning / blocked, with explicit user-facing reasoning
+- **100% local inference** — sentence-transformers for text, OpenCLIP for image/video, Tesseract for OCR. No keys, no usage caps, no privacy concerns
+- **REST API** — the validator exposes a single `/validate` endpoint, usable independently of the frontend
+
+## How it works
+
+```
+   ┌──────────────┐                  ┌─────────────────────────────────┐
+   │  React UI    │ multipart POST   │  FastAPI /validate              │
+   │  (drag/drop) │ ───────────────▶ │                                 │
+   └──────────────┘                  │   ┌─────────────────────────┐   │
+                                     │   │  Extract content        │   │
+                                     │   │  • PDF  → text          │   │
+                                     │   │  • IMG  → OCR + CLIP    │   │
+                                     │   │  • MP4  → frames + CLIP │   │
+                                     │   └────────────┬────────────┘   │
+                                     │                ▼                │
+                                     │   ┌─────────────────────────┐   │
+                                     │   │  Embed description      │   │
+                                     │   │  + extracted content    │   │
+                                     │   │  (MiniLM / OpenCLIP)    │   │
+                                     │   └────────────┬────────────┘   │
+                                     │                ▼                │
+                                     │   ┌─────────────────────────┐   │
+                                     │   │ cosine similarity →     │   │
+                                     │   │ score 0.0–1.0           │   │
+                                     │   │ status: allowed / warn  │   │
+                                     │   │         / blocked       │   │
+                                     │   └─────────────────────────┘   │
+                                     └────────────────┬────────────────┘
+                                                      ▼
+                                              { score, status,
+                                                message, extracted_text }
+```
+
+1. User writes a description and drops a file into the React frontend.
+2. The frontend POSTs both as `multipart/form-data` to FastAPI's `/validate`.
+3. The backend extracts content based on file type — PDF text, OCR + CLIP embedding for images, sampled frames + CLIP for video.
+4. Both the description and the extracted content are embedded and compared via cosine similarity.
+5. The score is bucketed into a status (`allowed` / `warning` / `blocked`) and returned to the UI, which renders the gate and either accepts or refuses the upload.
+
+## Tech stack
+
+| Layer | Choice |
+|-------|--------|
+| Backend | Python 3.9+ · FastAPI · Uvicorn |
+| Frontend | React · Vite |
+| Text embeddings | sentence-transformers (`all-MiniLM-L6-v2`) |
+| Image/video embeddings | OpenCLIP (`ViT-B-32`) |
+| OCR | Tesseract |
+| Transport | REST · `multipart/form-data` |
+
+## Setup & installation
+
+### Prerequisites
 
 - Python 3.9+
 - Node.js 18+
 - Tesseract OCR installed on your system
 
-### Install Tesseract OCR
+### Install Tesseract
 
-**Windows:**
-```
-Download the installer from https://github.com/UB-Mannheim/tesseract/wiki
-Run the .exe and add the install path (e.g. C:\Program Files\Tesseract-OCR) to your system PATH.
-```
+**Windows:** download from https://github.com/UB-Mannheim/tesseract/wiki and add the install path (e.g. `C:\Program Files\Tesseract-OCR`) to `PATH`.
 
-**macOS:**
-```bash
-brew install tesseract
-```
+**macOS:** `brew install tesseract`
 
-**Linux (Debian/Ubuntu):**
-```bash
-sudo apt update && sudo apt install tesseract-ocr
-```
+**Linux (Debian/Ubuntu):** `sudo apt update && sudo apt install tesseract-ocr`
 
-## Setup & Run
-
-### 1. Clone / Download the repo
-
-```bash
-cd file-validation-web-app
-```
-
-### 2. Backend
+### Backend
 
 ```bash
 cd backend
 python -m venv venv
-
-# Windows
+# Windows:
 venv\Scripts\activate
-
-# macOS / Linux
+# macOS/Linux:
 source venv/bin/activate
 
 pip install -r requirements.txt
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-The API will be running at `http://localhost:8000`.
+The API listens on `http://localhost:8000`.
 
-### 3. Frontend
-
-Open a second terminal:
+### Frontend
 
 ```bash
 cd frontend
@@ -68,42 +109,18 @@ npm install
 npm run dev
 ```
 
-The app will be running at `http://localhost:5173`.
+The UI runs on `http://localhost:5173`.
 
-### 4. Open in Browser
+### First-run note
 
-Navigate to [http://localhost:5173](http://localhost:5173).
+On the first request the backend downloads the ML models:
 
-## First Run Note
+- `all-MiniLM-L6-v2` (~80 MB)
+- `ViT-B-32` (OpenCLIP, ~350 MB)
 
-On the first request, the backend will automatically download the ML models:
+One-time download. After that the app works fully offline.
 
-- `all-MiniLM-L6-v2` (~80 MB) — sentence embeddings for text similarity
-- `ViT-B-32` (OpenCLIP, ~350 MB) — image/video-to-text similarity
-
-This is a one-time download. After that, the app works completely offline.
-
-## How to Test
-
-### Test 1 — Matching PDF (expect green / allowed)
-
-Upload any PDF (e.g. a rental agreement, an invoice, or a research paper).  
-In the description, write an accurate summary of the document's contents.  
-**Expected result:** Green banner, score ≥ 75%, status "Upload Confirmed".
-
-### Test 2 — Image with vague description (expect yellow / warning)
-
-Upload any JPG or PNG image (e.g. a photo of a cat, a screenshot, a chart).  
-In the description, write something vaguely related but not specific (e.g. "some kind of picture" for a photo of a dog).  
-**Expected result:** Yellow banner, score between 50–74%, option to "Submit Anyway".
-
-### Test 3 — Completely wrong description (expect red / blocked)
-
-Upload any file (PDF, image, or video).  
-In the description, write something completely unrelated (e.g. "A recipe for chocolate cake" for an image of a car).  
-**Expected result:** Red banner, score < 50%, status "Upload Rejected".
-
-## API Reference
+## API reference
 
 ### POST `/validate`
 
@@ -125,8 +142,20 @@ In the description, write something completely unrelated (e.g. "A recipe for cho
 }
 ```
 
-| Status      | Score Range | Meaning                     |
-|-------------|-------------|-----------------------------|
-| `allowed`   | ≥ 0.75      | Description matches file    |
-| `warning`   | 0.50 – 0.74 | Partial match               |
-| `blocked`   | < 0.50      | Description does not match  |
+| Status     | Score range  | Meaning                    |
+|------------|--------------|----------------------------|
+| `allowed`  | ≥ 0.75       | Description matches file   |
+| `warning`  | 0.50 – 0.74  | Partial match              |
+| `blocked`  | < 0.50       | Description does not match |
+
+## Test cases
+
+| Test | Setup | Expected |
+|------|-------|----------|
+| Matching PDF | Upload a PDF with an accurate summary as the description | Green banner, score ≥ 75% |
+| Vague image description | Upload an image with a vaguely-related description | Yellow banner, 50–74%, "Submit Anyway" option |
+| Wrong description | Upload any file with completely unrelated text | Red banner, < 50%, upload rejected |
+
+## License
+
+MIT
